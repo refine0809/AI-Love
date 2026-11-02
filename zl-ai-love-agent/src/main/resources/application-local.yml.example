@@ -1,0 +1,11 @@
+# 复制本文件为 application-local.yml，填入真实密钥后使用。
+# application-local.yml 已加入 .gitignore，不会进入仓库。
+spring:
+  ai:
+    dashscope:
+      api-key: 你的百炼APIKey
+
+# 下面两项供 VolcengineSdkAiInvoke 等 demo 裸跑 main 读取
+ark:
+  api-key: 你的火山方舟APIKey
+  model: ep-你的接入点ID

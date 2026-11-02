@@ -1,9 +1,10 @@
 package com.zl.AiLoveAgent.demo;
 
 /**
- * 阿里云百炼 API Key（从环境变量 AI_DASHSCOPE_API_KEY 读取，勿写入仓库）
+ * 阿里云百炼 API Key。
+ * 优先环境变量 AI_DASHSCOPE_API_KEY，否则读 application-local.yml。
  */
 public interface TestApiKey {
 
-    String API_KEY = System.getenv().getOrDefault("AI_DASHSCOPE_API_KEY", "");
+    String API_KEY = LocalSecrets.get("AI_DASHSCOPE_API_KEY", "spring.ai.dashscope.api-key");
 }

@@ -1,6 +1,9 @@
 spring:
   application:
     name: zl-ai-love-agent
+  profiles:
+    # 本地密钥写在 application-local.yml（已 gitignore），见 application-local.yml.example
+    active: local
   ai:
     dashscope:
       api-key: ${AI_DASHSCOPE_API_KEY:}

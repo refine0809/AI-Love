@@ -1,6 +1,10 @@
 HELP.md
 target/
 chat-memory/
+
+### Local secrets (do not commit) ###
+src/main/resources/application-local.yml
+src/main/resources/local-secrets.properties
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
