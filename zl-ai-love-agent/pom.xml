@@ -45,12 +45,71 @@
 			<version>4.4.0</version>
 		</dependency>
 
+		<!-- 阿里云百炼 DashScope SDK（建议 >= 2.12.0） -->
+		<dependency>
+			<groupId>com.alibaba</groupId>
+			<artifactId>dashscope-sdk-java</artifactId>
+			<version>2.19.1</version>
+		</dependency>
+
+		<!-- Spring AI Alibaba -->
+		<dependency>
+			<groupId>com.alibaba.cloud.ai</groupId>
+			<artifactId>spring-ai-alibaba-starter</artifactId>
+			<version>1.0.0-M6.1</version>
+		</dependency>
+
+		<!-- LangChain4j 百炼社区集成 -->
+		<dependency>
+			<groupId>dev.langchain4j</groupId>
+			<artifactId>langchain4j-community-dashscope</artifactId>
+			<version>1.0.0-beta2</version>
+		</dependency>
+
+		<dependency>
+    		<groupId>org.springframework.ai</groupId>
+   			<artifactId>spring-ai-ollama-spring-boot-starter</artifactId>
+   			<version>1.0.0-M6</version>
+		</dependency>
+
+		<!-- 火山方舟 Ark Runtime SDK -->
+		<dependency>
+			<groupId>com.volcengine</groupId>
+			<artifactId>volcengine-java-sdk-ark-runtime</artifactId>
+			<version>0.2.20</version>
+		</dependency>
+
+		<!-- JSON Schema（结构化输出 entity 转换） -->
+		<dependency>
+			<groupId>com.github.victools</groupId>
+			<artifactId>jsonschema-generator</artifactId>
+			<version>4.38.0</version>
+		</dependency>
+
+		<!-- Kryo（文件对话记忆序列化） -->
+		<dependency>
+			<groupId>com.esotericsoftware</groupId>
+			<artifactId>kryo</artifactId>
+			<version>5.6.2</version>
+		</dependency>
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
+
+	<repositories>
+		<repository>
+			<id>spring-milestones</id>
+			<name>Spring Milestones</name>
+			<url>https://repo.spring.io/milestone</url>
+			<snapshots>
+				<enabled>false</enabled>
+			</snapshots>
+		</repository>
+	</repositories>
 
 	<build>
 		<plugins>

@@ -1,0 +1,490 @@
+AI应用开发
+本节重点：熟悉Prompt工程和优化技巧，设计一款AI恋爱大师。
+实战Spring AI调用大模型、对话记忆、Advisor、结构化输出、自定义对话记忆、Prompt模板
+
+具体内容包括：
+1.Prompt工程基本概念
+2.Prompt优化技巧
+3.AI恋爱大师应用需求分析
+4.AI恋爱大师应用方案设计
+5.Spring AI ChatClient/Advisor/ChatMemory特性
+6.多轮对话AI应用开发
+7.Spring AI自定义Advisor
+8.Spring AI结构化输出-恋爱报告功能
+9.Spring AI对话记忆持久化
+10.提示词模板特性
+11.多模态概念和开发
+
+需求分析：在zl-ai-love-agent\TXT\恋爱大师-需求分析-MVP.md
+
+多轮对话实现：使用Spring AI框架的对话记忆能力。
+ChatClient：自己构造ChatClient，实现AI对话客户端。
+Advisor：Spring AI使用的顾问模式，增加AI，一系列可插拔的拦截器，在调用AI前和调用AI后执行额外操作
+如前置增强：调用前AI改写提示词、检查提示词是否安全
+后置增强：调用AI后记录日志、处理返回结果
+
+\Advisor原理图.png
+用户输入先变成可处理请求，调用前改写提示词、加记忆、做人设/安全检查
+真正发给Chat Model，模型返回结果，调用后，润色回复、过滤敏感内容、打印日志
+
+自主实现Advisors，保证通用性还是使用流式和非流式的环绕通知方法
+
+chat memory advisor：实现对话记忆功能，有三种内置方式
+MessageChatMemoryAdvisor:从记忆中检索历史对话，将其作为消息集合添加到提示词中，保留原始对话的完整结构，包括消息的角色标识
+PromptChatMemoryAdvisor:从记忆中检索历史对话，将其添加到提示词的系统文本中，失去原始的消息边界
+VectorStoreChatMemoryAdvisor:可用向量数据库来存储检索历史对话
+
+一般建议使用MessageChatMemoryAdvisor，符合大多数现代LLM的对话模型设计，能更好保持上下文连贯性
+
+Chat Memory负责历史对话的存储，定义了保存消息、查询消息、清空消息历史的方法。
+
+
+——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+
+多轮对话AI应用开发实战：
+后端项目新建app包，存放AI应用，新建Lovepp.java
+1).初始化ChatClient对象。使用Spring 的构造器注入方式注入阿里大模型dashscopeChatModel对象，使用该对象进行初始化ChatClient。初始化时指定默认的系统Prompt和基于内存的对话记忆Advisor。
+@Component
+@Slf4j
+public class LoveApp {
+
+    private final ChatClient chatClient;
+
+    private static final String SYSTEM_PROMPT = "扮演深耕恋爱心理领域的专家。开场向用户表明身份，告知用户可倾诉恋爱难题。" +
+            "围绕单身、恋爱、已婚三种状态提问：单身状态询问社交圈拓展及追求心仪对象的困扰；" +
+            "恋爱状态询问沟通、习惯差异引发的矛盾；已婚状态询问家庭责任与亲属关系处理的问题。" +
+            "引导用户详述事情经过、对方反应及自身想法，以便给出专属解决方案。";
+
+    public LoveApp(ChatModel dashscopeChatModel) {
+        // 初始化基于内存的对话记忆
+        ChatMemory chatMemory = new InMemoryChatMemory();
+        chatClient = ChatClient.builder(dashscopeChatModel)
+                .defaultSystem(SYSTEM_PROMPT)
+                .defaultAdvisors(
+                        new MessageChatMemoryAdvisor(chatMemory)
+                )
+                .build();
+    }
+}
+2).编写对话方法。调用chatClient对象，传入用户提示词，并且给advisor指定对话id和对话记忆大小
+public String doChat(String message, String chatId) {
+    ChatResponse response = chatClient
+            .prompt()
+            .user(message)
+            .advisors(spec -> spec.param(CHAT_MEMORY_CONVERSATION_ID_KEY, chatId)
+                    .param(CHAT_MEMORY_RETRIEVE_SIZE_KEY, 10))
+            .call()
+            .chatResponse();
+    String content = response.getResult().getOutput().getText();
+    log.info("content: {}", content);
+    return content;
+}
+3).编写单元测试，测试多轮对话：
+@SpringBootTest
+class LoveAppTest {
+
+    @Resource
+    private LoveApp loveApp;
+
+    @Test
+    void testChat() {
+        String chatId = UUID.randomUUID().toString();
+        // 第一轮
+        String message = "你好，我是完美世界主角，荒天帝石昊";
+        String answer = loveApp.doChat(message, chatId);
+        Assertions.assertNotNull(answer);
+        // 第二轮
+        message = "我想让另一半（云曦）更爱我";
+        answer = loveApp.doChat(message, chatId);
+        Assertions.assertNotNull(answer);
+        // 第三轮
+        message = "我的另一半叫什么来着？刚跟你说过，帮我回忆一下";
+        answer = loveApp.doChat(message, chatId);
+        Assertions.assertNotNull(answer);
+    }
+}
+
+——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+扩展知识点：
+自定义Advisor(拦截器)，对调用AI的请求进行前置增强和后置增强
+自定义步骤：
+    CallAroundAdvisor:用于处理同步请求和响应(非流式)
+    StreamAroundAdvisor:用于1处理流式请求和响应
+
+对于非流式处理，实现aroundCall方法
+@Override
+public AdvisedResponse aroundCall(AdvisedRequest advisedRequest, CallAroundAdvisorChain chain) {
+    // 1. 处理请求（前置处理）
+    AdvisedRequest modifiedRequest = processRequest(advisedRequest);
+    
+    // 2. 调用链中的下一个Advisor
+    AdvisedResponse response = chain.nextAroundCall(modifiedRequest);
+    
+    // 3. 处理响应（后置处理）
+    return processResponse(response);
+}
+
+对于流式处理，实现aroundStream方法
+@Override
+public Flux<AdvisedResponse> aroundStream(AdvisedRequest advisedRequest, StreamAroundAdvisorChain chain) {
+    // 1. 处理请求
+    AdvisedRequest modifiedRequest = processRequest(advisedRequest);
+    
+    // 2. 调用链中的下一个Advisor并处理流式响应
+    return chain.nextAroundStream(modifiedRequest)
+               .map(response -> processResponse(response));
+}
+
+设置执行顺序
+通过getOrder()方法指定Advisor在链中的执行顺序，值越小优先级越高，越先执行
+@Override
+public int getOrder() {
+    // 值越小优先级越高，越先执行
+    return 100; 
+}
+
+提供唯一名称,为每个Advisor提供一个唯一标识符
+@Override
+public String getName() {
+    return "myself的自定义的 Advisor";
+}
+
+——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+自定义Advisor实战：
+在根包下新建advisor包，编写日志Advisor的代码
+/**
+ * 自定义日志 Advisor
+ * 打印 info 级别日志、只输出单次用户提示词和 AI 回复的文本
+ */
+@Slf4j
+public class MyLoggerAdvisor implements CallAroundAdvisor, StreamAroundAdvisor {
+
+    @Override
+    public String getName() {
+        return this.getClass().getSimpleName();
+    }
+
+    @Override
+    public int getOrder() {
+        return 0;
+    }
+
+    private AdvisedRequest before(AdvisedRequest request) {
+        log.info("AI Request: {}", request.userText());
+        return request;
+    }
+
+    private void observeAfter(AdvisedResponse advisedResponse) {
+        log.info("AI Response: {}", advisedResponse.response().getResult().getOutput().getText());
+    }
+
+    public AdvisedResponse aroundCall(AdvisedRequest advisedRequest, CallAroundAdvisorChain chain) {
+        advisedRequest = this.before(advisedRequest);
+        AdvisedResponse advisedResponse = chain.nextAroundCall(advisedRequest);
+        this.observeAfter(advisedResponse);
+        return advisedResponse;
+    }
+
+    public Flux<AdvisedResponse> aroundStream(AdvisedRequest advisedRequest, StreamAroundAdvisorChain chain) {
+        advisedRequest = this.before(advisedRequest);
+        Flux<AdvisedResponse> advisedResponses = chain.nextAroundStream(advisedRequest);
+        return (new MessageAggregator()).aggregateAdvisedResponse(advisedResponses, this::observeAfter);
+    }
+}
+
+上述值得关注的是aroundStream方法的返回，通过MessageAggregator将流式响应聚合成单个AdvisedResponse。
+
+在LoveApp中应用自定义的日志Advisor
+chatClient = ChatClient.builder(dashscopeChatModel)
+        .defaultSystem(SYSTEM_PROMPT)
+        .defaultAdvisors(
+                new MessageChatMemoryAdvisor(chatMemory),
+                // 自定义日志 Advisor，可按需开启
+                new MyLoggerAdvisor(),
+        )
+        .build()
+—————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+自定义Re-Reading Advisor：
+Re2：AI重复阅读用户输入。对请求进行拦截并改写。
+/**
+ * 自定义 Re2 Advisor
+ * 可提高大型语言模型的推理能力
+ */
+public class ReReadingAdvisor implements CallAroundAdvisor, StreamAroundAdvisor {
+
+
+    private AdvisedRequest before(AdvisedRequest advisedRequest) {
+
+        Map<String, Object> advisedUserParams = new HashMap<>(advisedRequest.userParams());
+        advisedUserParams.put("re2_input_query", advisedRequest.userText());
+
+        return AdvisedRequest.from(advisedRequest)
+                .userText("""
+                        {re2_input_query}
+                        Read the question again: {re2_input_query}
+                        """)
+                .userParams(advisedUserParams)
+                .build();
+    }
+
+    @Override
+    public AdvisedResponse aroundCall(AdvisedRequest advisedRequest, CallAroundAdvisorChain chain) {
+        return chain.nextAroundCall(this.before(advisedRequest));
+    }
+
+    @Override
+    public Flux<AdvisedResponse> aroundStream(AdvisedRequest advisedRequest, StreamAroundAdvisorChain chain) {
+        return chain.nextAroundStream(this.before(advisedRequest));
+    }
+
+    @Override
+    public int getOrder() {
+        return 0;
+    }
+
+    @Override
+    public String getName() {
+        return this.getClass().getSimpleName();
+    }
+}
+
+可以在LoveApp中使用Advisor，进行测试，查看请求是否被改写。
+chatClient = ChatClient.builder(dashscopeChatModel)
+        .defaultSystem(SYSTEM_PROMPT)
+        .defaultAdvisors(
+                new MessageChatMemoryAdvisor(chatMemory),
+                // 自定义推理增强 Advisor，可按需开启
+                new ReReadingAdvisor()
+        )
+        .build();
+
+最佳实践：
+1).保持单一职责：每个Advisor只负责一个任务，不要混合多种任务
+2).注意执行顺序:合理设置getOrder()方法，确保Advisor按预期顺序执行
+3).同时支持流式和非流式：尽可能同时实现两种接口，提高灵活性
+4).高效处理请求：避免在Advisor中执行耗时操作
+5).测试边界情况：确保Advisor能够优雅处理异常和边界情况
+6).对于需要更加复杂处理的流式场景，使用Reactor的操作符
+@Override
+public Flux<AdvisedResponse> aroundStream(AdvisedRequest advisedRequest, StreamAroundAdvisorChain chain) {
+    return Mono.just(advisedRequest)
+           .publishOn(Schedulers.boundedElastic())
+           .map(request -> {
+               // 请求前处理逻辑
+               return modifyRequest(request);
+           })
+           .flatMapMany(request -> chain.nextAroundStream(request))
+           .map(response -> {
+               // 响应处理逻辑
+               return modifyResponse(response);
+           });
+}
+7).使用adviseContext在Advisor链中共享状态
+// 更新上下文
+advisedRequest = advisedRequest.updateContext(context -> {
+    context.put("key", "value");
+    return context;
+});
+
+// 读取上下文
+Object value = advisedResponse.adviseContext().get("key");
+
+——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+
+结构化输出-恋爱报告功能开发
+基本原理-工作流程：
+结构化输出转换器在大模型调用前后
+    调用前：转换器会在提示词后面附加格式指令，明确告诉模型应该生成何种结构的输出，引导模型生成符合指定格式的响应
+    调用后：转换器将模型的文本输出转换为结构化类型的实例
+
+注意：结构化输出转换器只是尽最大努力将模型输出转换为结构化数据，AI模型不保证一定按照要求返回结构化输出。
+
+进阶原理：API设计
+public interface StructuredOutputConverter<T> extends Converter<String, T>, FormatProvider {
+
+}
+集成2个接口：
+    FormatProvider接口：提供特定的格式指令给AI模型
+    Spring的Converter接口：将模型输出转换为结构化类型的实例
+public interface FormatProvider {
+String getFormat();
+}
+
+—————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+实战开发：
+引入JSON Schema依赖
+<dependency>
+    <groupId>com.github.victools</groupId>
+    <artifactId>jsonschema-generator</artifactId>
+    <version>4.38.0</version>
+</dependency>
+
+在Love App中定义恋爱报告类，使用record特性快速定义
+record LoveReport(String title, List<String> suggestions) {
+}
+
+在LoveApp中编写新方法，复用之前构造好的ChatClien对象，只需要额外补充原有的系统提示词、并添加结构化输出的代码。
+public LoveReport doChatWithReport(String message, String chatId) {
+    LoveReport loveReport = chatClient
+            .prompt()
+            .system(SYSTEM_PROMPT + "每次对话后都要生成恋爱结果，标题为{用户名}的恋爱报告，内容为建议列表")
+            .user(message)
+            .advisors(spec -> spec.param(CHAT_MEMORY_CONVERSATION_ID_KEY, chatId)
+                    .param(CHAT_MEMORY_RETRIEVE_SIZE_KEY, 10))
+            .call()
+            .entity(LoveReport.class);
+    log.info("loveReport: {}", loveReport);
+    return loveReport;
+}
+
+编写单元测试代码：
+@Test
+void doChatWithReport() {
+    String chatId = UUID.randomUUID().toString();
+    // 第一轮
+    String message = "你好，我是完美世界主角，荒天帝石昊，我想让另一半（云曦）更爱我，但我不知道该怎么做";
+    LoveApp.LoveReport loveReport = loveApp.doChatWithReport(message, chatId);
+    Assertions.assertNotNull(loveReport);
+    system.out.println("++++++++++++++++++++++++++++++++++++++++++++++++");
+}
+
+——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+对话记忆持久化
+之前使用了基于内存的对话记忆来保存对话上下文，服务器一旦重启，对话记忆就丢失了，有时希望将对话记忆持久化，保存到文件、数据库、redis或者其他对象存储中？
+利用现有依赖实现
+
+将对话保存到不同数据源中，使用自定义ChatMemory，基于文件读写的ChatMemory
+
+最主要的问题是消息和文本的转化，在保存消息时，将消息从Message转换为文本，在加载消息时，将文本转换为Message，也就是对象的序列化和反序列化
+最容易想到的是JSON进行序列化，不容易实操，原因：
+    1.持久化的Message是一个接口，存在多种不同子类实现
+    2.每种子类拥有的字段都不一样，结构不统一
+    3.子类没有无参构造函数，且没有实现序列化接口
+    选择更加高性能的Kryo序列化库
+
+实战：
+引入依赖：
+    <dependency>
+        <groupId>com.esotericsoftware</groupId>
+        <artifactId>kryo</artifactId>
+        <version>5.6.2</version>
+    </dependency>
+在根包下新建chatmemory包，编写基于文件持久化的对话记忆FileBasedChatMemory
+/**
+ * 基于文件持久化的对话记忆
+ */
+public class FileBasedChatMemory implements ChatMemory {
+
+    private final String BASE_DIR;
+    private static final Kryo kryo = new Kryo();
+
+    static {
+        kryo.setRegistrationRequired(false);
+        // 设置实例化策略
+        kryo.setInstantiatorStrategy(new StdInstantiatorStrategy());
+    }
+
+    // 构造对象时，指定文件保存目录
+    public FileBasedChatMemory(String dir) {
+        this.BASE_DIR = dir;
+        File baseDir = new File(dir);
+        if (!baseDir.exists()) {
+            baseDir.mkdirs();
+        }
+    }
+
+    @Override
+    public void add(String conversationId, List<Message> messages) {
+        List<Message> conversationMessages = getOrCreateConversation(conversationId);
+        conversationMessages.addAll(messages);
+        saveConversation(conversationId, conversationMessages);
+    }
+
+    @Override
+    public List<Message> get(String conversationId, int lastN) {
+        List<Message> allMessages = getOrCreateConversation(conversationId);
+        return allMessages.stream()
+                .skip(Math.max(0, allMessages.size() - lastN))
+                .toList();
+    }
+
+    @Override
+    public void clear(String conversationId) {
+        File file = getConversationFile(conversationId);
+        if (file.exists()) {
+            file.delete();
+        }
+    }
+
+    private List<Message> getOrCreateConversation(String conversationId) {
+        File file = getConversationFile(conversationId);
+        List<Message> messages = new ArrayList<>();
+        if (file.exists()) {
+            try (Input input = new Input(new FileInputStream(file))) {
+                messages = kryo.readObject(input, ArrayList.class);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        return messages;
+    }
+
+    private void saveConversation(String conversationId, List<Message> messages) {
+        File file = getConversationFile(conversationId);
+        try (Output output = new Output(new FileOutputStream(file))) {
+            kryo.writeObject(output, messages);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private File getConversationFile(String conversationId) {
+        return new File(BASE_DIR, conversationId + ".kryo");
+    }
+}
+大多数代码都是文件和Message对象的转化
+
+修改LoveApp的构造函数，使用基于文件的对话记忆：
+public LoveApp(ChatModel dashscopeChatModel) {
+    // 初始化基于文件的对话记忆
+    String fileDir = System.getProperty("user.dir") + "/chat-memory";
+    ChatMemory chatMemory = new FileBasedChatMemory(fileDir);
+    chatClient = ChatClient.builder(dashscopeChatModel)
+            .defaultSystem(SYSTEM_PROMPT)
+            .defaultAdvisors(
+                    new MessageChatMemoryAdvisor(chatMemory)
+            )
+            .build();
+}
+
+
+—————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+PromptTemplate模板
+是Spring AI框架中用于构建和管理提示词的核心组件。允许开发者创建带有占位符的文本模板，然后在运行时动态替换这些占位符
+
+SystemPromptTemplate：系统提示词模板，用于构建系统提示词，设置Ai行为和背景
+AssistantPromptTemplate:用于助手消息，用于设置AI回复结构
+
+—————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+多模态：
+AI多模块是指能够同时处理、理解和生成多种不同类型数据的能力
+允许在发送给AI的消息中包含图片等资源，示例代码如下:
+byte[] data = new ClassPathResource("/vertex-test.png").getContentAsByteArray();
+
+var userMessage = new UserMessage("Explain what do you see on this picture?",
+        List.of(new Media(MimeTypeUtils.IMAGE_PNG, this.data)));
+
+ChatResponse response = chatModel.call(new Prompt(List.of(this.userMessage)));
+
+多模态开发的方法：
+通过ChatClient的API来添加资源：
+String response = ChatClient.create(chatModel).prompt()
+		.user(u -> u.text("Explain what do you see on this picture?")
+				    .media(MimeTypeUtils.IMAGE_PNG, new ClassPathResource("/multimodal.test.png")))
+		.call()
+		.content();
+SDK多模态开发
+
+—————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+
+

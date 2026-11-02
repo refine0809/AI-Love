@@ -1,6 +1,16 @@
 spring:
   application:
     name: zl-ai-love-agent
+  ai:
+    dashscope:
+      api-key: ${AI_DASHSCOPE_API_KEY:}
+      chat:
+        options:
+          model: qwen-plus
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        model: qwen2.5-coder:7b
 server:
   port: 8123
   servlet:
@@ -22,3 +32,7 @@ knife4j:
   enable: true
   setting:
     language: zh_cn
+
+logging:
+  level:
+    org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor: debug
